@@ -8,7 +8,8 @@
 
 ## ✨ 功能特性
 
-- 🎭 **多性格切换**：内置 4 种毒舌角色（大厂老油条、冷酷教授、阴阳同事、疯狂星期四），一键切换不同吐槽风格
+- 🎭 **多性格切换**：内置 6 种毒舌角色（大厂老油条、冷酷教授、阴阳同事、疯狂星期四、夸夸天使、贴吧老哥），一键切换不同吐槽风格
+- 🎨 **像素风 Banner**：启动时显示彩色渐变的 "CODE ROASTER" ASCII 艺术字，仪式感拉满
 - 🧠 **Reflection 反思机制**：两轮 AI 自省 — 先生成初版点评，再自我批评改进，确保吐槽质量层层递进
 - 🔑 **钱包自理**：完全开源，你需要在自己的电脑上配置自己的大模型 API Key（支持 DeepSeek、OpenAI、智谱等所有 OpenAI 兼容接口）
 - 📺 **流式打字机效果**：终端实时渲染 AI 输出，配合 Rich 库的彩色排版，观感拉满
@@ -88,13 +89,19 @@ ROASTER_MODEL=moonshot-v1-8k
 # 在任意 Git 仓库中，确保你有未提交的代码改动
 # 然后运行：
 
-# 默认模式 — 大厂老油条（toxic）
+# 交互式模式 — 显示 Banner 后手动选择性格
 python -m code_roaster.main
 
-# 指定性格
-python -m code_roaster.main -p professor    # 冷酷教授
-python -m code_roaster.main -p coworker     # 阴阳同事
-python -m code_roaster.main -p kfc          # 疯狂星期四
+# 直接指定性格（跳过交互菜单）
+python -m code_roaster.main -p toxic         # 大厂老油条
+python -m code_roaster.main -p professor     # 冷酷教授
+python -m code_roaster.main -p coworker      # 阴阳同事
+python -m code_roaster.main -p kfc           # 疯狂星期四
+python -m code_roaster.main -p cheerleader   # 夸夸天使
+python -m code_roaster.main -p tieba         # 贴吧老哥
+
+# 跳过 Banner（适合脚本化使用）
+python -m code_roaster.main --no-banner -p toxic
 
 # 查看所有可用性格
 python -m code_roaster.main --list-personas
@@ -107,7 +114,7 @@ python -m code_roaster.main --help
 
 ## 🎭 Persona 介绍
 
-### 🚬 大厂老油条 `toxic`（默认）
+### 🚬 大厂老油条 `toxic`
 
 > "你这个代码的颗粒度太粗了，完全没有对齐业务闭环的打法。"
 
@@ -144,6 +151,26 @@ python -m code_roaster.main --help
 世界上最敷衍的 code reviewer。大脑 90% 的算力都在计算距离星期四还有几天。虽然很敷衍，但莫名其妙总能指出你代码里的致命 bug。
 
 **适用场景**：星期四。以及任何你想摆烂但又需要有人 review 代码的时刻。
+
+---
+
+### 🌈 夸夸天使 `cheerleader`
+
+> "天哪！！！你这个缩进也太完美了吧！！！而且你居然记得写注释！！！你简直是代码界的天才！！！虽然这里有个小小的空指针但我知道你肯定下一秒就能修好！！！"
+
+世界上最有正能量的代码审查员。无论你的代码有多烂，她都能找到夸你的角度。她会把你的烂代码形容成「潜力无限的创意表达」，让你在被指出 bug 的同时感到被爱与希望包围。
+
+**适用场景**：当你的代码被其他 persona 骂得怀疑人生后，需要一点温暖和治愈。
+
+---
+
+### 🎭 贴吧老哥 `tieba`
+
+> "老铁你这代码写的，蚌埠住了😅 变量名起得属实抽象，这波啊这波是面向bug编程，典中典！"
+
+来自百度贴吧资深吧友，满嘴抽象话和网络流行梗。说话随意粗犷，像在吧里水帖。虽然嘴臭，但真心想让代码变好。你永远不知道他下一句会蹦出什么贴吧金句。
+
+**适用场景**：当你怀念互联网的古早味道，想让贴吧老哥用最接地气的方式毒打你的代码。
 
 ---
 
