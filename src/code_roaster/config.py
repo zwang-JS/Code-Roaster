@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv, set_key
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -190,14 +190,16 @@ def setup_wizard():
     env_path = PROJECT_ROOT / ".env"
 
     try:
-        # 如果文件不存在，先创建
-        if not env_path.exists():
-            env_path.write_text("", encoding="utf-8")
-
-        # 使用 python-dotenv 的 set_key 写入
-        set_key(str(env_path), "ROASTER_BASE_URL", base_url)
-        set_key(str(env_path), "ROASTER_API_KEY", api_key)
-        set_key(str(env_path), "ROASTER_MODEL", model)
+        # 直接写入 .env 文件（避免 python-dotenv 的 set_key 在 Windows 上
+        # 使用临时文件重命名导致的权限错误）
+        env_content = (
+            f"# Code Roaster 配置文件\n"
+            f"# 由交互式配置向导自动生成\n\n"
+            f"ROASTER_BASE_URL={base_url}\n"
+            f"ROASTER_API_KEY={api_key}\n"
+            f"ROASTER_MODEL={model}\n"
+        )
+        env_path.write_text(env_content, encoding="utf-8")
 
         # 重新加载环境变量
         load_dotenv(env_path, override=True)
