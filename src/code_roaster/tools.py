@@ -23,12 +23,14 @@ def get_git_diff() -> str:
             ["git", "diff", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
 
         if result.returncode != 0:
             # Git 返回错误（比如不在仓库中、没有提交记录等）
-            stderr = result.stderr.strip()
+            stderr = (result.stderr or "").strip()
             if "not a git repository" in stderr.lower():
                 return (
                     "❌ 当前目录不是一个 Git 仓库。\n"
@@ -42,7 +44,7 @@ def get_git_diff() -> str:
                 )
             return f"⚠️  Git 命令执行出错:\n{stderr}"
 
-        diff_text = result.stdout.strip()
+        diff_text = (result.stdout or "").strip()
         return diff_text if diff_text else ""
 
     except FileNotFoundError:
@@ -69,16 +71,18 @@ def get_git_diff_staged() -> str:
             ["git", "diff", "--staged"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
 
         if result.returncode != 0:
-            stderr = result.stderr.strip()
+            stderr = (result.stderr or "").strip()
             if "not a git repository" in stderr.lower():
                 return "❌ 当前目录不是一个 Git 仓库。"
             return f"⚠️  Git 命令执行出错:\n{stderr}"
 
-        diff_text = result.stdout.strip()
+        diff_text = (result.stdout or "").strip()
         return diff_text if diff_text else ""
 
     except FileNotFoundError:
