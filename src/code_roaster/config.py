@@ -96,9 +96,11 @@ def setup_wizard():
     """
     # -- 欢迎 --
     console.print()
+    console.print()
     console.print(
         Panel(
-            Text("🔥 欢迎使用 Code Roaster — 赛博包工头！🔥", style="bold bright_yellow"),
+            "🔥 欢迎使用 Code Roaster — 赛博包工头！🔥",
+            style="bold bright_yellow",
             box=box.HEAVY,
             border_style="bright_yellow",
         )
@@ -106,11 +108,8 @@ def setup_wizard():
     console.print()
     console.print(
         Panel(
-            Text(
-                "检测到你是第一次使用，需要配置大模型 API Key。\n"
-                "别紧张，跟着下面的提示一步步来，30 秒搞定 ✨",
-                style="white",
-            ),
+            "检测到你是第一次使用，需要配置大模型 API Key。\n"
+            "别紧张，跟着下面的提示一步步来，30 秒搞定 ✨",
             title="👋 一键配置向导",
             border_style="cyan",
         )
@@ -148,12 +147,11 @@ def setup_wizard():
     console.print()
     console.print(
         Panel(
-            Text(
+            Text.from_markup(
                 f"你选择了 [bold]{preset['name']}[/bold]\n\n"
-                f"请粘贴你的 API Key（输入时不显示，这是正常的）：",
-                style="white",
+                f"请粘贴你的 API Key（输入时不显示，这是正常的）："
             ),
-            title="🔑 步骤 2/3：输入 API Key",
+            title="🔑 步骤 2/4：输入 API Key",
             border_style="green",
         )
     )
@@ -170,28 +168,64 @@ def setup_wizard():
         console.print("[yellow]API Key 为空，配置取消。[/yellow]")
         return
 
-    # -- 步骤 3：自定义平台时需要额外输入 BASE_URL 和 MODEL --
+    # -- 步骤 3：输入/确认 BASE_URL --
     base_url = preset["base_url"]
-    model = preset["model"]
-
-    if choice == "4":
+    if choice == "4" or base_url is None:
         console.print()
+        console.print(
+            Panel(
+                Text("请输入 API 端点地址。如果你不确定，直接回车使用默认值即可。"),
+                title="🔗 步骤 3/4：API 端点地址",
+                border_style="green",
+            )
+        )
         base_url = Prompt.ask(
-            "请输入 API 端点地址 (BASE_URL)",
+            "BASE_URL",
             default="https://api.openai.com/v1",
         )
-        model = Prompt.ask(
-            "请输入模型名称 (MODEL)",
-            default="gpt-4o-mini",
+    else:
+        console.print()
+        console.print(
+            Panel(
+                Text.from_markup(
+                    f"API 端点地址已自动填入: [bold cyan]{base_url}[/bold cyan]"
+                ),
+                title="🔗 步骤 3/4：API 端点地址（自动）",
+                border_style="green",
+            )
         )
+        custom_url = Prompt.ask(
+            "如需修改请输入新地址，否则直接回车",
+            default="",
+        )
+        if custom_url.strip():
+            base_url = custom_url.strip()
+
+    # -- 步骤 4：输入模型名称 --
+    default_model = preset["model"] or "gpt-4o-mini"
+    console.print()
+    console.print(
+        Panel(
+            Text.from_markup(
+                f"请输入模型名称。\n"
+                f"当前平台 [bold]{preset['name']}[/bold] 推荐使用 [bold cyan]{default_model}[/bold cyan]\n\n"
+                f"你也可以输入其他模型名称（如 deepseek-chat、gpt-4o、glm-4-flash 等）。"
+            ),
+            title="🧠 步骤 4/4：模型名称",
+            border_style="green",
+        )
+    )
+    model = Prompt.ask(
+        "MODEL",
+        default=default_model,
+    )
 
     # -- 写入 .env --
     console.print()
     env_path = PROJECT_ROOT / ".env"
 
     try:
-        # 直接写入 .env 文件（避免 python-dotenv 的 set_key 在 Windows 上
-        # 使用临时文件重命名导致的权限错误）
+        # 直接写入 .env 文件
         env_content = (
             f"# Code Roaster 配置文件\n"
             f"# 由交互式配置向导自动生成\n\n"
@@ -204,28 +238,22 @@ def setup_wizard():
         # 重新加载环境变量
         load_dotenv(env_path, override=True)
 
+        # 用 console.print 直接渲染 Rich 标记，避免 Text 不解析的问题
         console.print(
             Panel(
-                Text(
-                    f"✅ 配置完成！\n\n"
-                    f"   平台: [bold]{preset['name']}[/bold]\n"
-                    f"   模型: [bold]{model}[/bold]\n"
-                    f"   Key:  [dim]{api_key[:8]}...{api_key[-4:]}[/dim]\n\n"
-                    f"配置文件已保存到: [bold cyan]{env_path}[/bold cyan]",
-                    style="green",
-                ),
+                f"✅ 配置完成！\n\n"
+                f"   平台: [bold]{preset['name']}[/bold]\n"
+                f"   模型: [bold]{model}[/bold]\n"
+                f"   Key:  [dim]{api_key[:8]}...{api_key[-4:]}[/dim]\n\n"
+                f"配置文件已保存到: [bold cyan]{env_path}[/bold cyan]",
                 title="🎉 配置成功",
                 border_style="bright_green",
-                box=box.ROUNDED,
             )
         )
         console.print()
         console.print(
             Panel(
-                Text(
-                    "现在重新运行 [bold cyan]roaster[/bold cyan] 就可以开始使用了！🚀",
-                    style="white",
-                ),
+                "现在重新运行 [bold cyan]roaster[/bold cyan] 就可以开始使用了！🚀",
                 border_style="bright_cyan",
             )
         )
@@ -247,7 +275,7 @@ def _show_onboarding():
     console.print(Panel(title, box=box.HEAVY, border_style="bright_yellow"))
     console.print()
 
-    intro = Text(
+    intro = (
         "看起来你是第一次运行 Code Roaster！\n"
         "在使用之前，需要先配置你的大模型 API Key。\n"
         "请在你的终端中交互式运行 [bold]roaster[/bold] 来启动一键配置向导。\n\n"
@@ -256,8 +284,7 @@ def _show_onboarding():
         "2. 写入以下内容并替换为你的真实 Key：\n\n"
         "   ROASTER_BASE_URL=https://api.deepseek.com/v1\n"
         "   ROASTER_API_KEY=你的Key\n"
-        "   ROASTER_MODEL=deepseek-chat",
-        style="white",
+        "   ROASTER_MODEL=deepseek-chat"
     )
     console.print(Panel(intro, title="👋 新手指引", border_style="cyan"))
     console.print()
