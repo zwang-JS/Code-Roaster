@@ -14,8 +14,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 from rich.prompt import Prompt
-from rich.color import Color
-from rich.color_system import ColorSystem
+from rich.color import Color, ColorSystem
 from rich import box
 
 from .config import check_config
