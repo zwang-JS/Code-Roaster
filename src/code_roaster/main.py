@@ -226,7 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version="Code Roaster v1.1.0 — 赛博包工头",
+        version="Code Roaster v1.2.0 — 赛博包工头",
     )
 
     return parser
@@ -269,16 +269,16 @@ def main():
     if not args.no_banner:
         show_banner()
 
-    # 步骤 0.5：如果未通过 -p 指定性格，进入交互式选择
+    # 步骤 1：检查配置（如果未配置会启动交互式向导，然后优雅退出）
+    config = check_config()
+
+    # 步骤 2：如果未通过 -p 指定性格，进入交互式选择
     if args.persona is None:
         persona_name = select_persona_interactive()
     else:
         persona_name = args.persona
 
     persona = get_persona(persona_name)
-
-    # 步骤 1：检查配置（如果未配置会优雅退出）
-    config = check_config()
 
     # 打印模式标题
     console.print()
@@ -289,12 +289,12 @@ def main():
     console.print(Panel(header, box=box.HEAVY, border_style="bright_yellow"))
     console.print()
 
-    # 步骤 2：获取 git diff
+    # 步骤 3：获取 git diff
     with show_loading_spinner("正在获取代码变更..."):
         diff_text = get_git_diff()
         time.sleep(0.3)  # 给用户一点动画观看时间
 
-    # 步骤 3：处理空 diff
+    # 步骤 4：处理空 diff
     if not diff_text or diff_text.startswith("❌") or diff_text.startswith("⚠️") or diff_text.startswith("📭"):
         if diff_text.startswith("❌") or diff_text.startswith("⚠️") or diff_text.startswith("📭"):
             console.print(Panel(Text(diff_text, style="red"), border_style="red", title="出错了"))
@@ -309,7 +309,7 @@ def main():
             )
         return
 
-    # 步骤 4：实例化 Agent 并流式输出
+    # 步骤 5：实例化 Agent 并流式输出
     agent = RoasterAgent(config, persona_name)
 
     console.print()

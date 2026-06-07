@@ -2,18 +2,19 @@
 配置管理与用户引导中心
 ======================
 负责加载 .env 环境变量，检查配置完整性，
-并在缺少 API Key 时提供友好的新手指引。
+并在缺少 API Key 时提供一键式交互配置向导。
 """
 
 import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.prompt import Prompt, Confirm
 from rich import box
 
 # 项目根目录（code-roaster/）
@@ -28,13 +29,39 @@ else:
 
 console = Console()
 
+# ------------------------------------------------------------
+# 平台预设：BASE_URL 和默认 MODEL
+# ------------------------------------------------------------
+_PLATFORM_PRESETS = {
+    "1": {
+        "name": "DeepSeek",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+    },
+    "2": {
+        "name": "OpenAI",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+    },
+    "3": {
+        "name": "智谱 AI (GLM)",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "glm-4-flash",
+    },
+    "4": {
+        "name": "自定义（手动输入）",
+        "base_url": None,
+        "model": None,
+    },
+}
+
 
 def check_config() -> dict:
     """
     检查配置是否完整。
 
-    如果 ROASTER_API_KEY 未设置或为空，打印新手指引并退出程序。
-    如果 .env 文件不存在，也会提供创建指引。
+    如果 ROASTER_API_KEY 未设置或为空，自动启动交互式配置向导。
+    向导完成后会创建 .env 文件并退出，用户需重新运行。
 
     Returns:
         dict: 包含 base_url, api_key, model 的配置字典
@@ -44,7 +71,11 @@ def check_config() -> dict:
     model = os.getenv("ROASTER_MODEL", "deepseek-chat").strip()
 
     if not api_key:
-        _show_onboarding()
+        # 检查是否在交互式终端中
+        if sys.stdin.isatty():
+            setup_wizard()
+        else:
+            _show_onboarding()
         sys.exit(0)
 
     return {
@@ -54,95 +85,179 @@ def check_config() -> dict:
     }
 
 
+def setup_wizard():
+    """
+    交互式配置向导 —— 一键配齐 .env。
+
+    引导用户：
+    1. 选择大模型平台（DeepSeek / OpenAI / 智谱 / 自定义）
+    2. 输入 API Key
+    3. 自动写入 .env 文件
+    """
+    # -- 欢迎 --
+    console.print()
+    console.print(
+        Panel(
+            Text("🔥 欢迎使用 Code Roaster — 赛博包工头！🔥", style="bold bright_yellow"),
+            box=box.HEAVY,
+            border_style="bright_yellow",
+        )
+    )
+    console.print()
+    console.print(
+        Panel(
+            Text(
+                "检测到你是第一次使用，需要配置大模型 API Key。\n"
+                "别紧张，跟着下面的提示一步步来，30 秒搞定 ✨",
+                style="white",
+            ),
+            title="👋 一键配置向导",
+            border_style="cyan",
+        )
+    )
+    console.print()
+
+    # -- 步骤 1：选择平台 --
+    platform_text = Text()
+    platform_text.append("请选择你要使用的大模型平台：\n\n", style="white")
+    for key, preset in _PLATFORM_PRESETS.items():
+        platform_text.append(
+            f"  [{key}] {preset['name']}\n",
+            style="white",
+        )
+
+    console.print(
+        Panel(platform_text, title="🔌 步骤 1/3：选择平台", border_style="green")
+    )
+    console.print()
+
+    try:
+        choice = Prompt.ask(
+            "请输入编号",
+            choices=list(_PLATFORM_PRESETS.keys()),
+            default="1",
+            show_choices=False,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]已取消，下次再来配置吧～[/dim]")
+        return
+
+    preset = _PLATFORM_PRESETS[choice]
+
+    # -- 步骤 2：输入 API Key --
+    console.print()
+    console.print(
+        Panel(
+            Text(
+                f"你选择了 [bold]{preset['name']}[/bold]\n\n"
+                f"请粘贴你的 API Key（输入时不显示，这是正常的）：",
+                style="white",
+            ),
+            title="🔑 步骤 2/3：输入 API Key",
+            border_style="green",
+        )
+    )
+    console.print()
+
+    try:
+        # password=True 让输入不可见
+        api_key = Prompt.ask("API Key", password=True)
+    except KeyboardInterrupt:
+        console.print("\n[dim]已取消[/dim]")
+        return
+
+    if not api_key.strip():
+        console.print("[yellow]API Key 为空，配置取消。[/yellow]")
+        return
+
+    # -- 步骤 3：自定义平台时需要额外输入 BASE_URL 和 MODEL --
+    base_url = preset["base_url"]
+    model = preset["model"]
+
+    if choice == "4":
+        console.print()
+        base_url = Prompt.ask(
+            "请输入 API 端点地址 (BASE_URL)",
+            default="https://api.openai.com/v1",
+        )
+        model = Prompt.ask(
+            "请输入模型名称 (MODEL)",
+            default="gpt-4o-mini",
+        )
+
+    # -- 写入 .env --
+    console.print()
+    env_path = PROJECT_ROOT / ".env"
+
+    try:
+        # 如果文件不存在，先创建
+        if not env_path.exists():
+            env_path.write_text("", encoding="utf-8")
+
+        # 使用 python-dotenv 的 set_key 写入
+        set_key(str(env_path), "ROASTER_BASE_URL", base_url)
+        set_key(str(env_path), "ROASTER_API_KEY", api_key)
+        set_key(str(env_path), "ROASTER_MODEL", model)
+
+        # 重新加载环境变量
+        load_dotenv(env_path, override=True)
+
+        console.print(
+            Panel(
+                Text(
+                    f"✅ 配置完成！\n\n"
+                    f"   平台: [bold]{preset['name']}[/bold]\n"
+                    f"   模型: [bold]{model}[/bold]\n"
+                    f"   Key:  [dim]{api_key[:8]}...{api_key[-4:]}[/dim]\n\n"
+                    f"配置文件已保存到: [bold cyan]{env_path}[/bold cyan]",
+                    style="green",
+                ),
+                title="🎉 配置成功",
+                border_style="bright_green",
+                box=box.ROUNDED,
+            )
+        )
+        console.print()
+        console.print(
+            Panel(
+                Text(
+                    "现在重新运行 [bold cyan]roaster[/bold cyan] 就可以开始使用了！🚀",
+                    style="white",
+                ),
+                border_style="bright_cyan",
+            )
+        )
+        console.print()
+
+    except Exception as e:
+        console.print(f"\n[red]写入配置文件失败: {e}[/red]")
+        console.print("[yellow]请手动创建 .env 文件。[/yellow]")
+
+
 def _show_onboarding():
-    """使用 Rich 库渲染一个精美的新手配置引导界面。"""
-    # 标题
+    """
+    降级兜底 —— 静态新手指引（非交互式终端中使用）。
+
+    当终端不支持交互（如管道、重定向）时，打印文字指引。
+    """
     title = Text("🔥 欢迎使用 Code Roaster — 赛博包工头 🔥", style="bold bright_yellow")
     console.print()
     console.print(Panel(title, box=box.HEAVY, border_style="bright_yellow"))
     console.print()
 
-    # 介绍
     intro = Text(
         "看起来你是第一次运行 Code Roaster！\n"
         "在使用之前，需要先配置你的大模型 API Key。\n"
-        "别担心，这很简单，跟着下面的步骤走就行 👇",
+        "请在你的终端中交互式运行 [bold]roaster[/bold] 来启动一键配置向导。\n\n"
+        "或者手动配置：\n"
+        "1. 在项目根目录创建 .env 文件\n"
+        "2. 写入以下内容并替换为你的真实 Key：\n\n"
+        "   ROASTER_BASE_URL=https://api.deepseek.com/v1\n"
+        "   ROASTER_API_KEY=你的Key\n"
+        "   ROASTER_MODEL=deepseek-chat",
         style="white",
     )
     console.print(Panel(intro, title="👋 新手指引", border_style="cyan"))
-    console.print()
-
-    # 步骤 1：创建 .env 文件
-    step1 = Panel(
-        Text(
-            f"在项目根目录创建一个名为 [bold].env[/bold] 的文件：\n\n"
-            f"   📁 路径: [bold cyan]{PROJECT_ROOT / '.env'}[/bold cyan]\n\n"
-            f"   💡 提示: 你可以直接复制 [bold].env.example[/bold] 并重命名为 [bold].env[/bold]",
-            style="white",
-        ),
-        title="📝 步骤 1：创建 .env 文件",
-        border_style="green",
-    )
-    console.print(step1)
-    console.print()
-
-    # 步骤 2：获取 API Key
-    step2_content = Text(
-        "去以下任一平台注册账号并申请你的 API Key：\n\n", style="white"
-    )
-    step2_content.append("  🔹 ", style="bright_blue")
-    step2_content.append("DeepSeek", style="bold bright_blue")
-    step2_content.append(" — https://platform.deepseek.com\n", style="dim")
-
-    step2_content.append("  🔹 ", style="bright_green")
-    step2_content.append("OpenAI", style="bold bright_green")
-    step2_content.append("  — https://platform.openai.com\n", style="dim")
-
-    step2_content.append("  🔹 ", style="bright_magenta")
-    step2_content.append("智谱 AI", style="bold bright_magenta")
-    step2_content.append(" — https://open.bigmodel.cn\n", style="dim")
-
-    step2_content.append("  🔹 ", style="bright_cyan")
-    step2_content.append("其他兼容 OpenAI 接口的平台", style="bold bright_cyan")
-    step2_content.append(" 也都支持！\n\n", style="dim")
-
-    step2_content.append("💰 这些平台新用户通常都有免费额度，放心冲！", style="bright_yellow")
-
-    step2 = Panel(step2_content, title="🔑 步骤 2：获取 API Key", border_style="green")
-    console.print(step2)
-    console.print()
-
-    # 步骤 3：写入配置
-    step3_content = Text(
-        "打开你创建的 .env 文件，填入以下内容：\n\n",
-        style="white",
-    )
-    step3_content.append("  ROASTER_BASE_URL=https://api.deepseek.com/v1\n", style="dim")
-    step3_content.append("  ROASTER_API_KEY=", style="dim")
-    step3_content.append("sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n", style="bold red")
-    step3_content.append("  ROASTER_MODEL=deepseek-chat\n\n", style="dim")
-    step3_content.append(
-        "⚠️  请把 API Key 替换成你自己的真实 Key！\n"
-        "⚠️  如果你用的是 OpenAI，记得同步修改 BASE_URL 和 MODEL！",
-        style="bright_yellow",
-    )
-
-    step3 = Panel(step3_content, title="✏️  步骤 3：写入配置", border_style="green")
-    console.print(step3)
-    console.print()
-
-    # 步骤 4：重新运行
-    step4 = Panel(
-        Text(
-            "配置完成后，在终端重新运行：\n\n"
-            "   [bold cyan]python -m code_roaster.main[/bold cyan]\n\n"
-            "就可以让赛博包工头来点评你的代码啦！🎉",
-            style="white",
-        ),
-        title="🚀 步骤 4：重新运行",
-        border_style="green",
-    )
-    console.print(step4)
     console.print()
 
     # 支持的平台速查表
@@ -155,7 +270,11 @@ def _show_onboarding():
     table.add_row("OpenAI", "https://api.openai.com/v1", "gpt-4o / gpt-4o-mini")
     table.add_row("智谱 AI", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash")
     table.add_row("Moonshot", "https://api.moonshot.cn/v1", "moonshot-v1-8k")
-    table.add_row("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-turbo")
+    table.add_row(
+        "通义千问",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "qwen-turbo",
+    )
 
     console.print(table)
     console.print()

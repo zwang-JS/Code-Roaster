@@ -17,97 +17,52 @@
 
 ---
 
-## 🚀 快速开始
+## 🚀 快速开始（三步上手）
 
-### 环境要求
+### 前置要求
 
-- **Python 3.8+**
-- **Git**（用于获取代码变更）
-- 一个大模型 API Key（DeepSeek / OpenAI / 智谱 等均支持）
+- **Python 3.8+**（`python --version` 检查）
+- **Git**（`git --version` 检查）
+- 一个大模型 API Key（去 [DeepSeek](https://platform.deepseek.com) 免费注册即可）
 
-### 安装步骤
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/YOUR_USERNAME/code-roaster.git
-cd code-roaster
-
-# 2. 安装依赖
-pip install -r requirements.txt
-```
-
-### 配置 API Key
-
-Code Roaster 使用 `.env` 文件管理你的 API 密钥，**不会将你的 Key 上传到任何地方**。
+### 三步搞定
 
 ```bash
-# 3. 复制环境变量模板
-cp .env.example .env
+# 1. 克隆并进入项目
+git clone https://github.com/zwang-JS/Code-Roaster.git
+cd Code-Roaster
 
-# 4. 编辑 .env 文件，填入你的真实 API Key
-# Windows 用户可以用记事本打开 .env 文件编辑
+# 2. 一键安装（自动装好依赖 + 注册 roaster 命令）
+pip install -e .
+
+# 3. 在任意 Git 仓库里直接运行
+roaster
 ```
 
-`.env` 文件内容示例（以 DeepSeek 为例）：
-
-```env
-ROASTER_BASE_URL=https://api.deepseek.com/v1
-ROASTER_API_KEY=sk-your-real-api-key-here
-ROASTER_MODEL=deepseek-chat
-```
-
-<details>
-<summary>📋 其他平台的配置方法（点击展开）</summary>
-
-**OpenAI:**
-```env
-ROASTER_BASE_URL=https://api.openai.com/v1
-ROASTER_API_KEY=sk-your-openai-api-key
-ROASTER_MODEL=gpt-4o-mini
-```
-
-**智谱 AI (GLM):**
-```env
-ROASTER_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-ROASTER_API_KEY=your-zhipu-api-key
-ROASTER_MODEL=glm-4-flash
-```
-
-**Moonshot (月之暗面):**
-```env
-ROASTER_BASE_URL=https://api.moonshot.cn/v1
-ROASTER_API_KEY=your-moonshot-api-key
-ROASTER_MODEL=moonshot-v1-8k
-```
-
-任何兼容 OpenAI 接口格式的平台都可以使用，只需修改 `ROASTER_BASE_URL` 和 `ROASTER_MODEL` 即可。
-</details>
+**首次运行会自动弹出配置向导**，跟着提示选择平台、粘贴 API Key，`.env` 文件自动生成，完全不用手动编辑。
 
 ### 基本使用
 
 ```bash
-# 在任意 Git 仓库中，确保你有未提交的代码改动
-# 然后运行：
+# 交互式 — Banner + 性格菜单
+roaster
 
-# 交互式模式 — 显示 Banner 后手动选择性格
-python -m code_roaster.main
+# 指定性格
+roaster -p toxic         # 大厂老油条
+roaster -p professor     # 冷酷教授
+roaster -p coworker      # 阴阳同事
+roaster -p kfc           # 疯狂星期四
+roaster -p cheerleader   # 夸夸天使
+roaster -p tieba         # 贴吧老哥
 
-# 直接指定性格（跳过交互菜单）
-python -m code_roaster.main -p toxic         # 大厂老油条
-python -m code_roaster.main -p professor     # 冷酷教授
-python -m code_roaster.main -p coworker      # 阴阳同事
-python -m code_roaster.main -p kfc           # 疯狂星期四
-python -m code_roaster.main -p cheerleader   # 夸夸天使
-python -m code_roaster.main -p tieba         # 贴吧老哥
+# 跳过 Banner（脚本化使用）
+roaster --no-banner -p toxic
 
-# 跳过 Banner（适合脚本化使用）
-python -m code_roaster.main --no-banner -p toxic
+# 查看所有性格
+roaster --list-personas
 
-# 查看所有可用性格
-python -m code_roaster.main --list-personas
-
-# 查看帮助
-python -m code_roaster.main --help
+# 帮助
+roaster --help
 ```
 
 ---
