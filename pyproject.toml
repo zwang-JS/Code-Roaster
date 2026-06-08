@@ -30,10 +30,13 @@ dependencies = [
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",
     "rich>=13.0.0",
+    "anthropic>=0.30.0",
+    "textual>=0.50.0",
 ]
 
 [project.scripts]
 roaster = "code_roaster.main:main"
+roaster-tui = "code_roaster.tui:main"
 
 [tool.setuptools.package-dir]
 "" = "src"
