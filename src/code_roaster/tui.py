@@ -8,11 +8,10 @@ Code Roaster TUI — 终端用户界面
     roaster-tui
 """
 
-import sys
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, Container, ScrollableContainer
+from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.widgets import (
     Header,
     Footer,
@@ -22,14 +21,13 @@ from textual.widgets import (
     Label,
     Checkbox,
 )
-from textual.worker import Worker, WorkerState, get_current_worker
 from textual import work
 
-from .config import check_config, get_config
+from .config import check_config
 from .tools import get_diff_files, get_git_diff
 from .prompts import PERSONAS, get_persona
 from .agent import RoasterAgent
-from .history import save_review, show_stats as history_show_stats
+from .history import save_review
 
 
 class FileCheckbox(Checkbox):

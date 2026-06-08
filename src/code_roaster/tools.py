@@ -6,7 +6,6 @@
 
 import re
 import subprocess
-import sys
 
 
 def get_git_diff() -> str:

@@ -191,7 +191,6 @@ def build_parser() -> argparse.ArgumentParser:
             "  roaster                         # 显示 Banner 后交互式选择性格\n"
             "  roaster -p toxic                # 大厂老油条模式\n"
             "  roaster -p professor            # 冷酷教授模式\n"
-            "  roaster -p coworker             # 阴阳同事模式\n"
             "  roaster -p kfc                  # 疯狂星期四模式\n"
             "  roaster -p cheerleader          # 夸夸天使模式\n"
             "  roaster -p tieba                # 贴吧老哥模式\n"
@@ -267,7 +266,7 @@ def show_loading_spinner(message: str = "赛博包工头正在审查你的代码
     return console.status(f"[bold yellow]🔥 {message}[/bold yellow]", spinner="dots")
 
 
-def select_files_interactive(diff_files: list) -> str | None:
+def select_files_interactive(diff_files: list) -> tuple:
     """
     显示文件选择菜单，让用户选择要审查的文件。
 
@@ -278,7 +277,8 @@ def select_files_interactive(diff_files: list) -> str | None:
         diff_files: get_diff_files() 返回的文件列表
 
     Returns:
-        str | None: 合并后的 diff 文本，None 表示用户取消
+        tuple: (合并后的 diff 文本, 选中文件名列表)，
+               用户取消时返回 (None, None)
     """
     console.print()
     menu = Text()
@@ -300,7 +300,7 @@ def select_files_interactive(diff_files: list) -> str | None:
     try:
         raw = Prompt.ask("请输入编号", default="a", show_default=False)
     except KeyboardInterrupt:
-        return None
+        return None, None
 
     raw = raw.strip()
 
@@ -315,9 +315,11 @@ def select_files_interactive(diff_files: list) -> str | None:
             selected = diff_files
 
     if not selected:
-        return None
+        return None, None
 
-    return "\n\n".join(f["diff_text"] for f in selected)
+    diff_text = "\n\n".join(f["diff_text"] for f in selected)
+    filenames = [f["filename"] for f in selected]
+    return diff_text, filenames
 
 
 def main():
@@ -389,11 +391,9 @@ def main():
         diff_text = diff_files[0]["diff_text"]
         selected_files = [diff_files[0]["filename"]]
     else:
-        diff_text = select_files_interactive(diff_files)
+        diff_text, selected_files = select_files_interactive(diff_files)
         if diff_text is None:
             return
-        # 如果用户选了全部，用全部文件名；否则需要重新计算
-        selected_files = [f["filename"] for f in diff_files]
 
     # 步骤 6：实例化 Agent 并流式输出
     agent = RoasterAgent(config, persona_name)
