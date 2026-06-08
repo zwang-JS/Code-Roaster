@@ -457,7 +457,7 @@ def main():
     console.print()
     try:
         user_input = Prompt.ask(
-            f"💬  {persona['emoji']} 不服来辩！输入你的反驳",
+            f"💬  {persona['emoji']} 不服来辩！输入反驳（直接回车跳过）",
             default="",
             show_default=False,
         )
@@ -519,7 +519,7 @@ def main():
         round_num += 1
         try:
             user_input = Prompt.ask(
-                f"💬  {persona['emoji']} 继续反驳",
+                f"💬  {persona['emoji']} 继续反驳（回车退出）",
                 default="",
                 show_default=False,
             )
