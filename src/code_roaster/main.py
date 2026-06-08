@@ -542,13 +542,19 @@ def main():
         except KeyboardInterrupt:
             break
 
+    # round_num 从 1 开始，每完成一轮后 +1，所以完成数 = round_num - 1
+    completed = round_num - 1
     console.print()
+    if completed > 0:
+        end_msg = (
+            f"🏁 对线结束 — 共计 {completed} 回合。"
+            f"程序员 vs {persona['name']}：互不相让！"
+        )
+    else:
+        end_msg = "🏁 对线结束 — 还没开始就结束了。下次再来辩！"
     console.print(
         Panel(
-            Text(
-                f"🏁 对线结束 — 共计 {round_num} 回合。程序员 vs {persona['name']}：互不相让！",
-                style="dim italic",
-            ),
+            Text(end_msg, style="dim italic"),
             border_style="dim",
         )
     )

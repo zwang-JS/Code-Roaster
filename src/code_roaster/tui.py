@@ -179,6 +179,7 @@ class RoasterTUI(App):
         """应用挂载后：加载文件列表、注册按钮回调。"""
         self._load_files()
         self.query_one("#btn-roast", Button).can_focus = True
+        self.query_one("#btn-refresh", Button).can_focus = True
         self.query_one("#btn-stats", Button).can_focus = True
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -331,7 +332,8 @@ class RoasterTUI(App):
     def action_refresh_files(self) -> None:
         """刷新文件列表（Ctrl+R 或按钮触发）。"""
         self._load_files()
-        self._set_result("文件列表已刷新。")
+        # 用 notify 代替 set_result，避免覆盖正在查看的审查结果
+        self.notify("文件列表已刷新", timeout=2)
 
     # ================================================================
     # 反驳模式
@@ -462,15 +464,6 @@ class RoasterTUI(App):
                 f"程序员 vs {self._rebuttal_persona_name}：互不相让！"
             )
         self._update_result()
-
-        # 保存反驳后的历史
-        if self._roast_accumulated:
-            save_review(
-                self._rebuttal_persona_name,
-                self._rebuttal_persona_emoji,
-                [],
-                self._roast_accumulated,
-            )
 
     # ================================================================
     # 统计
