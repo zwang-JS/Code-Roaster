@@ -20,30 +20,41 @@
     ▼
 main.py (CLI 入口)
     │
-    ├──▶ config.py (配置检查)
+    ├──▶ config.py (配置检查 + 一键配置向导)
     │       └── .env 文件 → python-dotenv → 环境变量
     │
     ├──▶ tools.py (工具函数)
-    │       └── subprocess → git diff HEAD
+    │       └── subprocess → git diff HEAD / git diff --staged
     │
-    └──▶ agent.py (AI Agent)
-            ├── prompts.py (性格提示词)
-            ├── OpenAI Client (兼容接口)
-            └── Reflection 工作流:
-                ① 生成初版点评
-                ② 自我反思优化
-                ③ 流式输出最终结果
+    ├──▶ agent.py (AI Agent)
+    │       ├── prompts.py (性格提示词 + 反驳指令)
+    │       ├── OpenAI Client / Anthropic SDK (双接口兼容)
+    │       └── Reflection + Rebuttal 工作流:
+    │            ① 生成初版点评
+    │            ② 自我反思优化
+    │            ③ 流式输出最终结果
+    │            ④ 【反驳模式】用户与 AI 角色实时对线
+    │
+    ├──▶ history.py (审查历史 + 每周统计)
+    │       └── ~/.code-roaster/history.json
+    │
+    └──▶ tui.py (Textual 终端 GUI)
+            ├── 鼠标点击 / 复选框 / 下拉菜单
+            ├── 流式审查输出
+            └── 反驳模式（Input 组件 + 回合制对话）
 ```
 
 ### 模块职责与调用关系
 
 | 模块 | 职责 | 被谁调用 |
 |------|------|----------|
-| `main.py` | CLI 入口、参数解析、流程编排、流式渲染 | 用户直接运行 |
-| `config.py` | 加载 `.env`、配置校验、新手指引 | `main.py` |
-| `tools.py` | 执行 `git diff` 获取代码变更 | `main.py` |
-| `prompts.py` | 存储各角色 system prompt 和 reflection prompt | `agent.py` |
-| `agent.py` | 与大模型交互、Reflection 工作流、流式/非流式输出 | `main.py` |
+| `main.py` | CLI 入口、参数解析、流程编排、流式渲染、反驳对话循环 | 用户直接运行 |
+| `config.py` | 加载 `.env`、配置校验、8 平台预设一键配置向导 | `main.py`、`tui.py` |
+| `tools.py` | 执行 `git diff` / `git diff --staged`、按文件拆分 diff | `main.py`、`tui.py` |
+| `prompts.py` | 存储各角色 system prompt、reflection prompt、反驳指令 | `agent.py`、`main.py`、`tui.py` |
+| `agent.py` | 与大模型交互、Reflection 工作流、反驳流式输出、双 API 兼容 | `main.py`、`tui.py` |
+| `history.py` | 审查记录保存/加载、历史回顾、每周统计 | `main.py`、`tui.py` |
+| `tui.py` | Textual 终端 GUI：文件选择、审查、反驳、统计 | `roaster-tui` 命令 |
 
 ---
 
@@ -163,6 +174,32 @@ PERSONAS = {
 | `reflection_prompt` | `str` | 反思阶段的提示词，用于自我改进 |
 | `no_diff_message` | `str` | 当没有代码改动时的角色专属吐槽 |
 
+> **反驳模式** 使用全局 `REBUTTAL_INSTRUCTION`（在 `prompts.py` 中定义）追加到各角色的 system prompt 末尾。无需为每个角色单独写反驳指令。
+
+### 反驳模式原理
+
+审查完成后，用户可输入反驳理由，AI 保持角色语气进行回怼：
+
+```
+CLI 流程:
+  roast 流式输出 → 保存 history → Prompt.ask("不服来辩？")
+  → 用户输入 → agent.rebuttal_stream(conversation) → 流式回怼
+  → 循环（最多 10 回合）→ 空输入 / "算了" / Ctrl+C 退出
+
+TUI 流程:
+  roast 完成 → _start_rebuttal() 显示 Input 组件
+  → on_input_submitted → _do_rebuttal worker 线程
+  → 流式回怼 → _show_rebuttal_input 显示下一轮输入
+  → 重复至空输入 / 退出关键词 / 10 回合上限
+```
+
+**关键实现细节：**
+- `conversation` 是完整的 messages 列表 `[{role, content}, ...]`，每轮追加 user + assistant 两条
+- `agent.rebuttal_stream(messages)` 接收预构建的 messages，直接发给 API
+- Anthropic 接口会自动从 messages 中分离 `system` role
+- 空回复保护：AI 返回空内容时不加入对话历史，避免格式异常
+- TUI 中反驳内容不另存 history（原始 roast 已由 `do_roast` 保存）
+
 ### 如何支持新的大模型 API
 
 本项目使用 OpenAI 兼容接口，任何提供 `/v1/chat/completions` 端点的平台均可直接使用，无需修改代码。
@@ -194,27 +231,37 @@ class ClaudeRoasterAgent(BaseRoasterAgent):
 1. 在 `src/code_roaster/tools.py` 中添加新函数：
 
 ```python
-def get_file_tree() -> str:
+def get_git_diff_staged() -> str:
     """
-    获取当前仓库的文件树结构。
+    获取已暂存（git add 后）的代码改动。
 
     Returns:
-        str: 文件树文本
+        str: git diff --staged 的输出文本
     """
-    try:
-        result = subprocess.run(
-            ["git", "ls-files"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.stdout.strip()
-    except Exception as e:
-        return f"获取文件树失败: {e}"
+    ...
 ```
 
 2. 在 `main.py` 中调用新函数，将结果传递给 Agent
 3. 在 `prompts.py` 的提示词中说明有哪些工具信息可用
+
+### 历史记录数据结构
+
+审查记录保存在 `~/.code-roaster/history.json`，每条记录格式：
+
+```json
+{
+  "time": "2026-06-08T14:30:00.123456+08:00",
+  "persona": "toxic",
+  "persona_emoji": "🚬",
+  "files": ["src/auth.py", "src/utils.py"],
+  "roast": "点评内容前 500 字..."
+}
+```
+
+- 时间戳使用 `astimezone().isoformat()` 含时区信息
+- `_parse_time()` 函数统一剥离时区做比较，兼容新旧格式
+- 最多保留 200 条记录
+- 写操作有 3 次重试机制防并发冲突
 
 ---
 
@@ -301,24 +348,33 @@ python -m code_roaster.main --list-personas
 
 ## 🔮 已知限制与未来规划
 
+### 已解决（原限制）
+
+1. ~~仅支持 OpenAI 兼容接口~~ → **已支持 Anthropic Claude 原生 API**（v1.3.0+）
+2. ~~单文件 diff~~ → **已支持多文件拆分 + 交互式勾选**（CLI + TUI 均有）
+3. ~~无历史记录~~ → **已支持审查历史 + 每周统计**（`~/.code-roaster/history.json`）
+4. ~~无 TUI~~ → **已支持 Textual 终端 GUI**（`roaster-tui`）
+5. ~~单次输出~~ → **已支持反驳模式**：审查后可与 AI 角色实时多轮对线
+
 ### 当前限制
 
-1. **仅支持 git diff HEAD**：目前只审查未提交的改动，不支持审查指定 commit、PR diff 等
-2. **单文件 diff**：当 diff 过大时可能导致 token 超限，缺少智能截断
-3. **无缓存机制**：相同 diff 重复调用会浪费 API 额度
-4. **仅支持 OpenAI 兼容接口**：虽然覆盖面广，但不支持 Anthropic Claude 原生 API
-5. **串行 Reflection**：生成和反思是串行的，增加了一倍的 API 调用成本
+1. **仅支持 git diff HEAD**：暂不支持审查指定 commit、PR diff 等
+2. **无智能截断**：超长 diff 可能导致 token 超限
+3. **无缓存机制**：相同 diff 重复调用浪费 API 额度
+4. **串行 Reflection**：生成和反思是串行的，增加了一倍 API 调用成本
+5. **TUI 反驳模式**：已实现但暂不支持文件列表传参到反驳会话
 
 ### 未来规划
 
-- [ ] 支持审查指定 commit 范围（`git diff HEAD~3`）
-- [ ] 支持 GitHub PR Review 集成
-- [ ] 支持 Anthropic Claude 原生 API
+- [ ] 支持审查指定 commit 范围（`git diff HEAD~3`、`--staged` 等）
+- [ ] 支持 GitHub PR Review 集成（GitHub Action）
 - [ ] 智能 diff 截断，超长 diff 自动分块审查
 - [ ] 本地 diff 缓存，避免重复 API 调用
-- [ ] 多模型投票机制（多个模型同时审查，综合评分）
-- [ ] Web UI 界面
+- [ ] 生成分享卡片（JSON → Pillow 渲染图片）
+- [ ] 代码心理侧写（从代码反推作者性格）
 - [ ] VSCode 插件
+- [ ] 盲盒 Persona（随机抽取隐藏角色）
+- [ ] 毒舌 Commit Message 生成器
 
 ---
 
