@@ -3,26 +3,36 @@ Agent 大脑
 =========
 实现 RoasterAgent 类，负责与大模型交互，
 并实现 Reflection（反思）机制以提升点评质量。
+
+支持的 API 类型:
+    - openai:     OpenAI 兼容接口（DeepSeek, OpenAI, 智谱, Ollama 等）
+    - anthropic:  Anthropic Claude 原生 API
 """
 
 from openai import OpenAI
 
 from .prompts import get_persona
 
+# Anthropic SDK 为可选依赖，使用时才导入
+_ANTHROPIC_AVAILABLE = False
+_Anthropic = None
+try:
+    from anthropic import Anthropic as _Ant
+
+    _Anthropic = _Ant
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    pass
+
 
 class RoasterAgent:
     """
-    代码审查 Agent，支持 Reflection 工作流。
+    代码审查 Agent，支持 Reflection 工作流，兼容 OpenAI 和 Anthropic 两种接口。
 
     工作流程：
     1. 生成阶段：将 git diff 发给大模型，生成初版点评
     2. 反思阶段：将初版点评反馈给大模型，让其自我批评并改进
     3. 最终返回反思迭代后的点评
-
-    Attributes:
-        client: OpenAI 兼容客户端实例
-        model: 使用的模型名称
-        persona: 当前性格配置字典
     """
 
     def __init__(self, config: dict, persona_name: str):
@@ -30,156 +40,191 @@ class RoasterAgent:
         初始化 RoasterAgent。
 
         Args:
-            config: 配置字典，包含 base_url, api_key, model
-            persona_name: 性格名称 (toxic, professor, coworker, kfc)
+            config: 配置字典，包含 api_type, base_url, api_key, model
+            persona_name: 性格名称
         """
-        self.client = OpenAI(
-            base_url=config["base_url"],
-            api_key=config["api_key"],
-        )
+        self.api_type = config.get("api_type", "openai")
         self.model = config["model"]
         self.persona = get_persona(persona_name)
         self.persona_name = persona_name
 
+        if self.api_type == "anthropic":
+            if not _ANTHROPIC_AVAILABLE:
+                raise ImportError(
+                    "使用 Anthropic API 需要安装 anthropic SDK。\n"
+                    "请运行: pip install anthropic"
+                )
+            self.client = _Anthropic(api_key=config["api_key"])
+        else:
+            # OpenAI 兼容接口（默认）
+            self.client = OpenAI(
+                base_url=config["base_url"],
+                api_key=config["api_key"],
+            )
+
+    # ================================================================
+    # 公开方法
+    # ================================================================
+
     def roast(self, diff_text: str) -> str:
-        """
-        对代码变更执行毒舌审查（非流式，返回完整文本）。
-
-        Args:
-            diff_text: git diff 的文本输出
-
-        Returns:
-            str: 反思后的终极点评文本
-        """
-        # 第一步：生成初版点评
+        """对代码变更执行毒舌审查（非流式，返回完整文本）。"""
         first_pass = self._generate_roast(diff_text)
-
         if first_pass is None:
             return "😵 大模型调用失败，也许它也被你的代码吓跑了..."
 
-        # 第二步：反思并生成改进版
         refined = self._reflect_and_refine(diff_text, first_pass)
-
-        if refined is None:
-            # 反思失败，返回初版
-            return first_pass
-
-        return refined
+        return refined if refined is not None else first_pass
 
     def roast_stream(self, diff_text: str):
         """
         对代码变更执行毒舌审查（流式输出）。
 
-        先执行生成和反思两个非流式阶段，
-        最后以流式方式输出反思后的点评，
-        实现打字机效果。
-
-        Args:
-            diff_text: git diff 的文本输出
-
-        Yields:
-            str: 流式输出的文本片段
+        第一、二阶段非流式（内部处理），最终反思结果流式输出。
         """
-        # 第一步：生成初版点评（非流式）
         first_pass = self._generate_roast(diff_text)
-
         if first_pass is None:
             yield "😵 大模型调用失败，也许它也被你的代码吓跑了..."
             return
 
-        # 第二步：构建反思请求的消息
-        messages = [
-            {"role": "system", "content": self.persona["system_prompt"]},
-            {"role": "user", "content": f"以下是需要审查的代码变更：\n\n```diff\n{diff_text}\n```"},
-            {"role": "assistant", "content": first_pass},
-            {"role": "user", "content": self.persona["reflection_prompt"]},
+        # 构建反思消息
+        user_messages = [
+            f"以下是需要审查的代码变更：\n\n```diff\n{diff_text}\n```",
+            first_pass,
+            self.persona["reflection_prompt"],
         ]
 
-        # 第三步：流式输出反思后的结果
         try:
-            stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                stream=True,
-                temperature=0.9,
-                max_tokens=500,
-            )
-
-            for chunk in stream:
-                if chunk.choices and len(chunk.choices) > 0:
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        yield delta.content
-
+            if self.api_type == "anthropic":
+                yield from self._stream_anthropic(user_messages)
+            else:
+                yield from self._stream_openai(user_messages)
         except Exception as e:
-            # 流式调用失败，回退到返回初版
             yield first_pass
             yield f"\n\n(反思阶段出错: {str(e)}，以上为初版点评)"
 
+    # ================================================================
+    # 内部：生成 & 反思（非流式）
+    # ================================================================
+
     def _generate_roast(self, diff_text: str) -> str | None:
-        """
-        第一阶段：生成初版毒舌点评。
-
-        Args:
-            diff_text: git diff 文本
-
-        Returns:
-            str | None: 初版点评文本，失败时返回 None
-        """
-        messages = [
-            {"role": "system", "content": self.persona["system_prompt"]},
-            {"role": "user", "content": f"以下是需要审查的代码变更：\n\n```diff\n{diff_text}\n```"},
+        """第一阶段：生成初版毒舌点评。"""
+        user_messages = [
+            f"以下是需要审查的代码变更：\n\n```diff\n{diff_text}\n```",
         ]
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.85,
-                max_tokens=500,
-                stream=False,
-            )
-
-            content = response.choices[0].message.content
-            return content.strip() if content else None
-
-        except Exception as e:
-            # 不在这里崩溃，返回 None 让上层处理
+            if self.api_type == "anthropic":
+                return self._call_anthropic(user_messages, temperature=0.85)
+            else:
+                return self._call_openai(user_messages, temperature=0.85)
+        except Exception:
             return None
 
     def _reflect_and_refine(self, diff_text: str, first_pass: str) -> str | None:
-        """
-        第二阶段：反思初版点评并生成改进版。
-
-        将初版点评和反思提示词一起发给模型，
-        让模型自我批评后重新生成更高质量的点评。
-
-        Args:
-            diff_text: git diff 文本
-            first_pass: 初版点评文本
-
-        Returns:
-            str | None: 改进后的点评文本，失败时返回 None
-        """
-        messages = [
-            {"role": "system", "content": self.persona["system_prompt"]},
-            {"role": "user", "content": f"以下是需要审查的代码变更：\n\n```diff\n{diff_text}\n```"},
-            {"role": "assistant", "content": first_pass},
-            {"role": "user", "content": self.persona["reflection_prompt"]},
+        """第二阶段：反思初版点评并生成改进版。"""
+        user_messages = [
+            f"以下是需要审查的代码变更：\n\n```diff\n{diff_text}\n```",
+            first_pass,
+            self.persona["reflection_prompt"],
         ]
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.9,
-                max_tokens=500,
-                stream=False,
-            )
-
-            content = response.choices[0].message.content
-            return content.strip() if content else None
-
+            if self.api_type == "anthropic":
+                return self._call_anthropic(user_messages, temperature=0.9)
+            else:
+                return self._call_openai(user_messages, temperature=0.9)
         except Exception:
-            # 反思失败不阻塞，返回 None 让上层使用初版
             return None
+
+    # ================================================================
+    # OpenAI 兼容接口实现
+    # ================================================================
+
+    def _call_openai(self, user_messages: list[str], temperature: float) -> str | None:
+        """OpenAI 兼容接口：非流式调用。"""
+        messages = [{"role": "system", "content": self.persona["system_prompt"]}]
+        roles = ["user", "assistant", "user"]
+        for i, msg in enumerate(user_messages):
+            role = roles[i] if i < len(roles) else "user"
+            messages.append({"role": role, "content": msg})
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=500,
+            stream=False,
+        )
+        content = response.choices[0].message.content
+        return content.strip() if content else None
+
+    def _stream_openai(self, user_messages: list[str]):
+        """OpenAI 兼容接口：流式输出。"""
+        messages = [{"role": "system", "content": self.persona["system_prompt"]}]
+        roles = ["user", "assistant", "user"]
+        for i, msg in enumerate(user_messages):
+            role = roles[i] if i < len(roles) else "user"
+            messages.append({"role": role, "content": msg})
+
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.9,
+            max_tokens=500,
+            stream=True,
+        )
+
+        for chunk in stream:
+            if chunk.choices and len(chunk.choices) > 0:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+
+    # ================================================================
+    # Anthropic Claude 原生 API 实现
+    # ================================================================
+
+    def _call_anthropic(self, user_messages: list[str], temperature: float) -> str | None:
+        """Anthropic API：非流式调用。"""
+        messages = self._build_anthropic_messages(user_messages)
+
+        response = self.client.messages.create(
+            model=self.model,
+            messages=messages,
+            system=self.persona["system_prompt"],
+            temperature=temperature,
+            max_tokens=500,
+        )
+        # Anthropic 返回的 content 是列表，取第一段文本
+        if response.content and len(response.content) > 0:
+            return response.content[0].text.strip()
+        return None
+
+    def _stream_anthropic(self, user_messages: list[str]):
+        """Anthropic API：流式输出。"""
+        messages = self._build_anthropic_messages(user_messages)
+
+        with self.client.messages.stream(
+            model=self.model,
+            messages=messages,
+            system=self.persona["system_prompt"],
+            temperature=0.9,
+            max_tokens=500,
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
+
+    @staticmethod
+    def _build_anthropic_messages(user_messages: list[str]) -> list[dict]:
+        """
+        将用户消息列表转换为 Anthropic 消息格式。
+
+        Anthropic 的消息格式要求 user 和 assistant 交替，
+        且没有 system role（system prompt 作为独立参数传入）。
+        """
+        messages = []
+        roles = ["user", "assistant", "user"]
+        for i, msg in enumerate(user_messages):
+            role = roles[i] if i < len(roles) else "user"
+            messages.append({"role": role, "content": msg})
+        return messages
