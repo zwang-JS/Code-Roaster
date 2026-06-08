@@ -194,7 +194,12 @@ def build_parser() -> argparse.ArgumentParser:
             "  roaster -p kfc                  # 疯狂星期四模式\n"
             "  roaster -p cheerleader          # 夸夸天使模式\n"
             "  roaster -p tieba                # 贴吧老哥模式\n"
+            "  roaster -p ceo                  # 霸道总裁模式\n"
+            "  roaster -p luxun                # 鲁迅先生模式\n"
+            "  roaster -p beijing              # 京爷模式\n"
             "  roaster --list-personas         # 列出所有性格\n"
+            "  roaster --history               # 查看审查历史\n"
+            "  roaster --stats                 # 查看每周统计\n"
         ),
     )
 
@@ -475,11 +480,20 @@ def main():
         {"role": "assistant", "content": accumulated},
     ]
 
+    MAX_ROUNDS = 10
     round_num = 1
     while user_input.strip():
         # 退出关键词
         if user_input.strip().lower() in ("quit", "exit", "退出", "算了", "不说了"):
             console.print(f"\n[dim]{persona['emoji']} 对方退出了对线...[/dim]")
+            break
+
+        # 最大回合限制
+        if round_num > MAX_ROUNDS:
+            console.print(
+                f"\n[dim]已对战 {MAX_ROUNDS} 回合，{persona['emoji']} {persona['name']} 累了，"
+                "下次再来吧～[/dim]"
+            )
             break
 
         conversation.append({"role": "user", "content": user_input.strip()})
@@ -512,7 +526,9 @@ def main():
             console.print(f"\n[red]对线出错: {e}[/red]")
             break
 
-        conversation.append({"role": "assistant", "content": response_accumulated})
+        # 空回复保护：AI 没返回内容时不加入对话历史
+        if response_accumulated.strip():
+            conversation.append({"role": "assistant", "content": response_accumulated})
 
         # 下一轮输入
         console.print()

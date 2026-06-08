@@ -295,7 +295,7 @@ def setup_wizard():
                 f"   接口: [bold cyan]{api_type}[/bold cyan]\n"
                 f"   平台: [bold]{platform_label}[/bold]\n"
                 f"   模型: [bold]{model}[/bold]\n"
-                f"   Key:  [dim]{api_key[:8]}...{api_key[-4:]}[/dim]\n\n"
+                f"   Key:  [dim]...{api_key[-4:]}[/dim]\n\n"
                 f"配置文件已保存到: [bold cyan]{env_path}[/bold cyan]",
                 title="🎉 配置成功",
                 border_style="bright_green",

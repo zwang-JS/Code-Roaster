@@ -54,12 +54,13 @@ class RoasterAgent:
                     "使用 Anthropic API 需要安装 anthropic SDK。\n"
                     "请运行: pip install anthropic"
                 )
-            self.client = _Anthropic(api_key=config["api_key"])
+            self.client = _Anthropic(api_key=config["api_key"], timeout=60.0)
         else:
             # OpenAI 兼容接口（默认）
             self.client = OpenAI(
                 base_url=config["base_url"],
                 api_key=config["api_key"],
+                timeout=60.0,
             )
 
     # ================================================================

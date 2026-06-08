@@ -8,6 +8,7 @@ Code Roaster TUI — 终端用户界面
     roaster-tui
 """
 
+import os
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -20,12 +21,15 @@ from textual.widgets import (
     Static,
     Label,
     Checkbox,
+    Input,
 )
 from textual import work
 
 from .config import check_config
 from .tools import get_diff_files, get_git_diff
-from .prompts import PERSONAS, get_persona
+from .prompts import PERSONAS, get_persona, REBUTTAL_INSTRUCTION
+from rich.text import Text as RichText
+
 from .agent import RoasterAgent
 from .history import save_review
 
@@ -34,9 +38,11 @@ class FileCheckbox(Checkbox):
     """带文件名和统计的复选框。"""
 
     def __init__(self, filename: str, added: int, removed: int) -> None:
-        label = f"{filename}  (+{added}/-{removed})"
+        short_name = os.path.basename(filename)
+        label = f"{short_name}  (+{added}/-{removed})"
         super().__init__(label, value=True)
         self.file_filename = filename
+        self.tooltip = filename  # 完整路径在 tooltip 中显示
 
 
 class RoasterTUI(App):
@@ -102,10 +108,17 @@ class RoasterTUI(App):
         background: $panel;
         color: $text-disabled;
     }
+
+    #rebuttal-input {
+        display: none;
+        margin-top: 1;
+        border: solid $secondary;
+    }
     """
 
     BINDINGS = [
         ("r", "start_roast", "开始审查"),
+        ("ctrl+r", "refresh_files", "刷新文件"),
         ("s", "show_stats", "查看统计"),
         ("q", "quit", "退出"),
     ]
@@ -115,6 +128,13 @@ class RoasterTUI(App):
         self._config = config
         self._diff_files: list[dict] = []
         self._roast_accumulated: str = ""
+        # 反驳模式状态
+        self._in_rebuttal: bool = False
+        self._conversation: list[dict] = []
+        self._rebuttal_persona_name: str = ""
+        self._rebuttal_persona_emoji: str = ""
+        self._rebuttal_round: int = 0
+        self._rebuttal_diff_text: str = ""
 
     def compose(self) -> ComposeResult:
         """构建 UI 布局。"""
@@ -138,14 +158,19 @@ class RoasterTUI(App):
                 yield ScrollableContainer(id="file-list")
 
                 yield Button("🔥 开始审查 (R)", id="btn-roast", variant="error")
+                yield Button("🔄 刷新文件 (Ctrl+R)", id="btn-refresh", variant="default")
                 yield Button("📊 查看统计 (S)", id="btn-stats", variant="primary")
 
             # --- 右侧主面板 ---
             with Vertical(id="main-panel"):
                 yield Label("💬 审查结果", id="result-title")
                 yield ScrollableContainer(
-                    Static("准备就绪。点击 [开始审查] 或按 R 键。", id="result"),
+                    Static("准备就绪。点击「开始审查」或按 R 键。", id="result"),
                     id="result-scroll",
+                )
+                yield Input(
+                    placeholder="输入反驳（回车发送，空着退出）",
+                    id="rebuttal-input",
                 )
 
         yield Footer()
@@ -160,6 +185,8 @@ class RoasterTUI(App):
         """按钮点击事件分发。"""
         if event.button.id == "btn-roast":
             self.action_start_roast()
+        elif event.button.id == "btn-refresh":
+            self.action_refresh_files()
         elif event.button.id == "btn-stats":
             self.action_show_stats()
 
@@ -177,7 +204,7 @@ class RoasterTUI(App):
 
         if not self._diff_files:
             raw = get_git_diff()
-            if raw.startswith("❌") or raw.startswith("⚠️"):
+            if raw.startswith("❌") or raw.startswith("⚠️") or raw.startswith("📭"):
                 file_list.mount(Static(raw[:200], id="file-error"))
             else:
                 file_list.mount(Static("📭 没有未提交的代码改动", id="file-empty"))
@@ -238,6 +265,7 @@ class RoasterTUI(App):
         selected_files: list[str],
     ) -> None:
         """后台线程：执行审查并流式更新 UI。"""
+        success = False
         try:
             agent = RoasterAgent(self._config, persona_name)
 
@@ -245,6 +273,7 @@ class RoasterTUI(App):
                 self._roast_accumulated += chunk
                 # 从工作线程安全更新 UI
                 self.call_from_thread(self._update_result)
+            success = True
         except Exception as e:
             self.call_from_thread(
                 self._set_result,
@@ -263,6 +292,14 @@ class RoasterTUI(App):
             self.call_from_thread(
                 self._reenable_button,
             )
+            # 审查成功后启动反驳模式
+            if success:
+                self.call_from_thread(
+                    self._start_rebuttal,
+                    diff_text,
+                    persona_name,
+                    persona_emoji,
+                )
 
     # ================================================================
     # UI 更新（从线程安全调用）
@@ -271,7 +308,8 @@ class RoasterTUI(App):
     def _update_result(self) -> None:
         """更新结果显示区域。"""
         result = self.query_one("#result", Static)
-        result.update(self._roast_accumulated)
+        # 用 RichText 包裹避免 AI 输出中的 [ ] 被当 markup 解析
+        result.update(RichText(self._roast_accumulated))
         # 自动滚动到底部
         scroll = self.query_one("#result-scroll", ScrollableContainer)
         scroll.scroll_end(animate=False)
@@ -279,11 +317,160 @@ class RoasterTUI(App):
     def _set_result(self, text: str) -> None:
         """设置结果文本（非线程场景）。"""
         result = self.query_one("#result", Static)
-        result.update(text)
+        # 用 RichText 包裹避免 AI 输出中的 [ ] 被当 markup 解析
+        result.update(RichText(text))
 
     def _reenable_button(self) -> None:
         """重新启用审查按钮。"""
         self.query_one("#btn-roast", Button).disabled = False
+
+    # ================================================================
+    # 文件刷新
+    # ================================================================
+
+    def action_refresh_files(self) -> None:
+        """刷新文件列表（Ctrl+R 或按钮触发）。"""
+        self._load_files()
+        self._set_result("文件列表已刷新。")
+
+    # ================================================================
+    # 反驳模式
+    # ================================================================
+
+    def _start_rebuttal(self, diff_text: str, persona_name: str,
+                        persona_emoji: str) -> None:
+        """激活反驳模式：显示输入框，构建对话历史。"""
+        self._in_rebuttal = True
+        self._rebuttal_round = 1
+        self._rebuttal_persona_name = persona_name
+        self._rebuttal_persona_emoji = persona_emoji
+        self._rebuttal_diff_text = diff_text
+
+        persona = get_persona(persona_name)
+        rebuttal_system = persona["system_prompt"] + REBUTTAL_INSTRUCTION
+        self._conversation = [
+            {"role": "system", "content": rebuttal_system},
+            {"role": "user",
+             "content": f"以下是需要审查的代码变更：\n\n```diff\n{diff_text}\n```"},
+            {"role": "assistant", "content": self._roast_accumulated},
+        ]
+
+        # 更新结果区标题
+        self._roast_accumulated += (
+            f"\n\n---\n💬 不服来辩！在下方输入框输入你的反驳...\n"
+        )
+        self._update_result()
+
+        # 显示输入框
+        rebuttal_input = self.query_one("#rebuttal-input", Input)
+        rebuttal_input.styles.display = "block"
+        rebuttal_input.focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """处理反驳输入提交。"""
+        if event.input.id != "rebuttal-input" or not self._in_rebuttal:
+            return
+
+        user_text = event.value.strip()
+        event.input.clear()
+
+        if not user_text:
+            self._end_rebuttal()
+            return
+
+        if user_text.lower() in ("quit", "exit", "退出", "算了", "不说了"):
+            self._end_rebuttal("对方退出了对线。")
+            return
+
+        # 隐藏输入框，开始处理
+        event.input.styles.display = "none"
+
+        # 更新对话历史
+        self._conversation.append({"role": "user", "content": user_text})
+
+        # 追加用户输入到结果区
+        self._roast_accumulated += f"\n\n🗣️ 你：{user_text}\n\n"
+        self._update_result()
+
+        # 启动反驳 worker
+        self._do_rebuttal()
+
+    @work(exclusive=True, thread=True)
+    def _do_rebuttal(self) -> None:
+        """后台线程：执行反驳 API 调用并流式更新 UI。"""
+        try:
+            agent = RoasterAgent(self._config, self._rebuttal_persona_name)
+
+            response_prefix = (
+                f"{self._rebuttal_persona_emoji} "
+                f"{self._rebuttal_persona_name} 回怼"
+                f"(第{self._rebuttal_round}回合)：\n"
+            )
+            self._roast_accumulated += response_prefix
+            self.call_from_thread(self._update_result)
+
+            rebuttal_text = ""
+            for chunk in agent.rebuttal_stream(self._conversation):
+                rebuttal_text += chunk
+                self._roast_accumulated += chunk
+                self.call_from_thread(self._update_result)
+
+            # 保存 AI 回复到对话历史
+            if rebuttal_text.strip():
+                self._conversation.append(
+                    {"role": "assistant", "content": rebuttal_text}
+                )
+
+            self._rebuttal_round += 1
+
+            # 检查最大回合数
+            if self._rebuttal_round > 10:
+                self._roast_accumulated += (
+                    "\n\n(已对战 10 回合，AI 累了，下次再来～)"
+                )
+                self.call_from_thread(self._update_result)
+                self.call_from_thread(self._end_rebuttal)
+            else:
+                self.call_from_thread(self._show_rebuttal_input)
+
+        except Exception as e:
+            self._roast_accumulated += f"\n❌ 反驳出错: {e}"
+            self.call_from_thread(self._update_result)
+            self.call_from_thread(self._end_rebuttal)
+
+    def _show_rebuttal_input(self) -> None:
+        """重新显示反驳输入框（下一轮）。"""
+        rebuttal_input = self.query_one("#rebuttal-input", Input)
+        rebuttal_input.styles.display = "block"
+        rebuttal_input.placeholder = (
+            f"继续反驳（第{self._rebuttal_round}回合，回车退出）"
+        )
+        rebuttal_input.focus()
+
+    def _end_rebuttal(self, message: str | None = None) -> None:
+        """结束反驳模式。"""
+        self._in_rebuttal = False
+        rebuttal_input = self.query_one("#rebuttal-input", Input)
+        rebuttal_input.styles.display = "none"
+
+        if message:
+            self._roast_accumulated += f"\n\n🏁 {message}"
+        else:
+            total = self._rebuttal_round - 1
+            self._roast_accumulated += (
+                f"\n\n🏁 对线结束 — 共计 {total} 回合。"
+                f"程序员 vs {self._rebuttal_persona_name}：互不相让！"
+            )
+        self._update_result()
+
+        # 保存反驳后的历史
+        if self._roast_accumulated:
+            save_review(
+                self._rebuttal_persona_name,
+                self._rebuttal_persona_emoji,
+                [],
+                self._roast_accumulated,
+            )
 
     # ================================================================
     # 统计

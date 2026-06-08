@@ -8,7 +8,7 @@
 """
 
 import json
-import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -49,7 +49,7 @@ def save_review(persona_name: str, persona_emoji: str, files: list[str],
     records = _load_all()
 
     record = {
-        "time": datetime.now().isoformat(),
+        "time": datetime.now().astimezone().isoformat(),
         "persona": persona_name,
         "persona_emoji": persona_emoji,
         "files": files,
@@ -62,10 +62,17 @@ def save_review(persona_name: str, persona_emoji: str, files: list[str],
         records = records[-_MAX_RECORDS:]
 
     try:
-        _HISTORY_FILE.write_text(
-            json.dumps(records, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        # 简单文件锁：重试 3 次避免并发写冲突
+        for attempt in range(3):
+            try:
+                _HISTORY_FILE.write_text(
+                    json.dumps(records, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                break
+            except (OSError, PermissionError):
+                if attempt < 2:
+                    time.sleep(0.1)
     except Exception:
         pass  # 保存失败不影响主流程
 
