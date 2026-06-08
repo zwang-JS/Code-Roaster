@@ -19,7 +19,7 @@ from rich import box
 
 from .config import check_config
 from .tools import get_git_diff, get_diff_files
-from .prompts import get_persona, get_available_personas, PERSONAS
+from .prompts import get_persona, get_available_personas, PERSONAS, REBUTTAL_INSTRUCTION
 from .agent import RoasterAgent
 from .history import save_review, show_history, show_stats
 
@@ -450,6 +450,93 @@ def main():
     # 步骤 7：保存审查记录到历史
     if accumulated:
         save_review(persona_name, persona["emoji"], selected_files, accumulated)
+
+    # ================================================================
+    # 步骤 8：反驳模式 — 用户与 AI 对线
+    # ================================================================
+    console.print()
+    try:
+        user_input = Prompt.ask(
+            f"💬  {persona['emoji']} 不服来辩！输入你的反驳",
+            default="",
+            show_default=False,
+        )
+    except KeyboardInterrupt:
+        return
+
+    if not user_input.strip():
+        return
+
+    # 构建对话历史（system prompt + diff + roast + 后续对线轮次）
+    rebuttal_system = persona["system_prompt"] + REBUTTAL_INSTRUCTION
+    conversation: list[dict] = [
+        {"role": "system", "content": rebuttal_system},
+        {"role": "user", "content": f"以下是需要审查的代码变更：\n\n```diff\n{diff_text}\n```"},
+        {"role": "assistant", "content": accumulated},
+    ]
+
+    round_num = 1
+    while user_input.strip():
+        # 退出关键词
+        if user_input.strip().lower() in ("quit", "exit", "退出", "算了", "不说了"):
+            console.print(f"\n[dim]{persona['emoji']} 对方退出了对线...[/dim]")
+            break
+
+        conversation.append({"role": "user", "content": user_input.strip()})
+
+        # 流式输出 AI 回怼
+        console.print()
+        response_accumulated = ""
+
+        try:
+            with Live(
+                Panel(Text(""), border_style="bright_magenta", box=box.ROUNDED),
+                console=console,
+                refresh_per_second=20,
+                transient=False,
+            ) as live:
+                for chunk in agent.rebuttal_stream(conversation):
+                    response_accumulated += chunk
+                    live.update(
+                        Panel(
+                            Text(response_accumulated, style="white"),
+                            title=f"{persona['emoji']} {persona['name']} 回怼 (第{round_num}回合)",
+                            border_style="bright_magenta",
+                            box=box.ROUNDED,
+                        )
+                    )
+        except KeyboardInterrupt:
+            console.print("\n[dim]对线被强行终止...[/dim]")
+            break
+        except Exception as e:
+            console.print(f"\n[red]对线出错: {e}[/red]")
+            break
+
+        conversation.append({"role": "assistant", "content": response_accumulated})
+
+        # 下一轮输入
+        console.print()
+        round_num += 1
+        try:
+            user_input = Prompt.ask(
+                f"💬  {persona['emoji']} 继续反驳",
+                default="",
+                show_default=False,
+            )
+        except KeyboardInterrupt:
+            break
+
+    console.print()
+    console.print(
+        Panel(
+            Text(
+                f"🏁 对线结束 — 共计 {round_num} 回合。程序员 vs {persona['name']}：互不相让！",
+                style="dim italic",
+            ),
+            border_style="dim",
+        )
+    )
+    console.print()
 
 
 if __name__ == "__main__":

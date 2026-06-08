@@ -102,6 +102,30 @@ class RoasterAgent:
             yield first_pass
             yield f"\n\n(反思阶段出错: {str(e)}，以上为初版点评)"
 
+    def rebuttal_stream(self, messages: list[dict]):
+        """
+        反驳模式：将完整对话历史发给 AI，流式返回 AI 的回怼。
+
+        与 roast_stream 不同，此方法接收预构建的 messages 列表
+        （已包含 system prompt、diff、roast 结果及所有对线轮次）。
+
+        Args:
+            messages: 完整的对话消息列表，格式为：
+                [{"role": "system", "content": "..."},
+                 {"role": "user", "content": "..."},
+                 {"role": "assistant", "content": "..."}, ...]
+
+        Yields:
+            str: AI 回复的文本片段（流式）
+        """
+        try:
+            if self.api_type == "anthropic":
+                yield from self._rebuttal_stream_anthropic(messages)
+            else:
+                yield from self._rebuttal_stream_openai(messages)
+        except Exception as e:
+            yield f"(反驳失败: {str(e)})"
+
     # ================================================================
     # 内部：生成 & 反思（非流式）
     # ================================================================
@@ -228,3 +252,53 @@ class RoasterAgent:
             role = roles[i] if i < len(roles) else "user"
             messages.append({"role": role, "content": msg})
         return messages
+
+    # ================================================================
+    # 内部：反驳模式流式实现
+    # ================================================================
+
+    def _rebuttal_stream_openai(self, messages: list[dict]):
+        """OpenAI 兼容接口：反驳模式流式输出。
+
+        messages 已包含完整的对话历史（system + user + assistant 交替）。
+        """
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.95,
+            max_tokens=400,
+            stream=True,
+        )
+
+        for chunk in stream:
+            if chunk.choices and len(chunk.choices) > 0:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+
+    def _rebuttal_stream_anthropic(self, messages: list[dict]):
+        """Anthropic API：反驳模式流式输出。
+
+        将 system role 从 messages 中分离，作为独立参数传入。
+        """
+        # 分离 system prompt
+        system_prompt = ""
+        anthropic_msgs: list[dict] = []
+        for m in messages:
+            if m["role"] == "system":
+                system_prompt = m["content"]
+            else:
+                anthropic_msgs.append(m)
+
+        if not system_prompt:
+            system_prompt = self.persona["system_prompt"]
+
+        with self.client.messages.stream(
+            model=self.model,
+            messages=anthropic_msgs,
+            system=system_prompt,
+            temperature=0.95,
+            max_tokens=400,
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
