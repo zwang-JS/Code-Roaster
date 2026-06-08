@@ -89,6 +89,28 @@ def _load_all() -> list[dict]:
         return []
 
 
+def _parse_time(time_str: str):
+    """
+    解析 ISO 时间字符串为 naive datetime。
+
+    兼容带时区和不带时区的格式，始终返回无时区的 datetime，
+    避免和 datetime.now()（naive）比较时出错。
+
+    Args:
+        time_str: ISO 格式的时间字符串
+
+    Returns:
+        datetime | None: 解析成功返回 naive datetime，失败返回 None
+    """
+    try:
+        dt = datetime.fromisoformat(time_str)
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        return dt
+    except Exception:
+        return None
+
+
 def show_history(limit: int = 20) -> None:
     """
     在终端显示最近 N 条审查记录。
@@ -121,8 +143,8 @@ def show_history(limit: int = 20) -> None:
 
     for i, r in enumerate(reversed(recent), 1):
         try:
-            dt = datetime.fromisoformat(r["time"])
-            time_str = dt.strftime("%m/%d %H:%M")
+            dt = _parse_time(r["time"])
+            time_str = dt.strftime("%m/%d %H:%M") if dt else r.get("time", "?")
         except Exception:
             time_str = r.get("time", "?")
 
@@ -174,12 +196,9 @@ def show_stats() -> None:
 
     weekly = []
     for r in records:
-        try:
-            dt = datetime.fromisoformat(r["time"])
-            if dt >= week_start:
-                weekly.append(r)
-        except Exception:
-            pass
+        dt = _parse_time(r["time"])
+        if dt is not None and dt >= week_start:
+            weekly.append(r)
 
     # 统计数据
     total_reviews = len(weekly)

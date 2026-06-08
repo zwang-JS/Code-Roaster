@@ -507,6 +507,9 @@ class RoasterTUI(App):
         for r in data:
             try:
                 dt = datetime.fromisoformat(r["time"])
+                # 兼容时区：naive 和 aware 的 datetime 无法比较，统一剥离时区
+                if dt.tzinfo is not None:
+                    dt = dt.replace(tzinfo=None)
                 if dt >= week_start:
                     weekly.append(r)
                     p = r.get("persona", "?")
