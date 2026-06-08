@@ -7,11 +7,7 @@ Agent 调用和流式输出的完整流程。
 """
 
 import argparse
-import os
-import sys
 import time
-import platform
-from pathlib import Path
 
 from rich.console import Console
 from rich.live import Live
@@ -25,7 +21,6 @@ from .config import check_config
 from .tools import get_git_diff
 from .prompts import get_persona, get_available_personas, PERSONAS
 from .agent import RoasterAgent
-from .tts import speak as tts_speak
 
 console = Console()
 
@@ -228,27 +223,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--install-hook",
-        action="store_true",
-        help="在当前 Git 仓库安装 post-commit hook（每次 commit 后自动触发点评）",
-    )
-
-    parser.add_argument(
-        "--uninstall-hook",
-        action="store_true",
-        help="卸载已安装的 post-commit hook",
-    )
-
-    parser.add_argument(
-        "--no-tts",
-        action="store_true",
-        help="禁用语音播报（只看文字点评，不朗读）",
-    )
-
-    parser.add_argument(
         "--version",
         action="version",
-        version="Code Roaster v1.3.0 — 赛博包工头",
+        version="Code Roaster v1.2.0 — 赛博包工头",
     )
 
     return parser
@@ -277,147 +254,10 @@ def show_loading_spinner(message: str = "赛博包工头正在审查你的代码
     return console.status(f"[bold yellow]🔥 {message}[/bold yellow]", spinner="dots")
 
 
-def _find_git_dir() -> Path | None:
-    """
-    查找当前目录所在的 Git 仓库根目录。
-
-    Returns:
-        Path | None: .git 目录路径，未找到返回 None
-    """
-    cwd = Path.cwd()
-    for parent in [cwd, *cwd.parents]:
-        git_dir = parent / ".git"
-        if git_dir.exists() and git_dir.is_dir():
-            return git_dir
-    return None
-
-
-def install_git_hook():
-    """在当前 Git 仓库安装 post-commit hook，每次 commit 后自动运行 Code Roaster。"""
-    git_dir = _find_git_dir()
-
-    if git_dir is None:
-        console.print(
-            Panel(
-                "[red]当前目录不在 Git 仓库中。[/red]\n"
-                "请在 Git 仓库根目录下运行此命令。",
-                title="❌ 安装失败",
-                border_style="red",
-            )
-        )
-        return
-
-    hooks_dir = git_dir / "hooks"
-    hooks_dir.mkdir(exist_ok=True)
-    hook_path = hooks_dir / "post-commit"
-
-    # 检查是否已安装
-    if hook_path.exists():
-        existing = hook_path.read_text(encoding="utf-8", errors="replace")
-        if "Code Roaster" in existing:
-            console.print(
-                Panel(
-                    f"[yellow]Code Roaster Hook 已经安装在 {hook_path}[/yellow]\n"
-                    "如需重新安装，请先运行 [bold]roaster --uninstall-hook[/bold]",
-                    title="⚠️ 已安装",
-                    border_style="yellow",
-                )
-            )
-            return
-
-    # 用当前 Python 解释器的完整路径，确保 hook 环境正确
-    python_path = sys.executable.replace("\\", "/")
-
-    # 跨平台 hook 脚本（Git for Windows 也用 bash 执行 hooks）
-    hook_script = (
-        "#!/bin/bash\n"
-        "# ========================================\n"
-        "# Code Roaster — 赛博包工头 post-commit hook\n"
-        "# 每次 git commit 后自动点评你的代码\n"
-        "# 安装/卸载: roaster --install-hook / --uninstall-hook\n"
-        "# ========================================\n\n"
-        f'"{python_path}" -m code_roaster.main --no-banner\n'
-    )
-
-    try:
-        hook_path.write_text(hook_script, encoding="utf-8")
-
-        # Unix / macOS 下添加可执行权限
-        if platform.system() != "Windows":
-            os.chmod(hook_path, 0o755)
-
-        console.print(
-            Panel(
-                f"[green]✅ Git Hook 已安装！[/green]\n\n"
-                f"   路径: [bold cyan]{hook_path}[/bold cyan]\n\n"
-                f"以后每次 [bold]git commit[/bold] 之后，\n"
-                f"赛博包工头都会自动蹦出来点评你的代码。🔥",
-                title="🔗 Hook 安装成功",
-                border_style="bright_green",
-            )
-        )
-    except Exception as e:
-        console.print(f"[red]写入 Hook 失败: {e}[/red]")
-
-
-def uninstall_git_hook():
-    """卸载已安装的 post-commit hook。"""
-    git_dir = _find_git_dir()
-
-    if git_dir is None:
-        console.print(
-            Panel(
-                "[red]当前目录不在 Git 仓库中。[/red]",
-                title="❌ 卸载失败",
-                border_style="red",
-            )
-        )
-        return
-
-    hook_path = git_dir / "hooks" / "post-commit"
-
-    if not hook_path.exists():
-        console.print("[yellow]未检测到已安装的 Hook。[/yellow]")
-        return
-
-    try:
-        content = hook_path.read_text(encoding="utf-8", errors="replace")
-        if "Code Roaster" in content:
-            hook_path.unlink()
-            console.print(
-                Panel(
-                    "[green]✅ Git Hook 已卸载。[/green]\n"
-                    "commit 后将不再自动触发 Code Roaster。",
-                    title="🔗 Hook 已卸载",
-                    border_style="green",
-                )
-            )
-        else:
-            # 不是我们的 hook，不要删
-            console.print(
-                Panel(
-                    "[yellow]post-commit hook 存在但不是 Code Roaster 安装的，不会删除。[/yellow]",
-                    title="⚠️ 跳过",
-                    border_style="yellow",
-                )
-            )
-    except Exception as e:
-        console.print(f"[red]卸载 Hook 失败: {e}[/red]")
-
-
 def main():
     """主函数 — CLI 入口点。"""
     parser = build_parser()
     args = parser.parse_args()
-
-    # --install-hook / --uninstall-hook（独立操作，不需配置检查）
-    if args.install_hook:
-        install_git_hook()
-        return
-
-    if args.uninstall_hook:
-        uninstall_git_hook()
-        return
 
     # --list-personas 标志
     if args.list_personas:
@@ -489,9 +329,9 @@ def main():
         box=box.ROUNDED,
     )
 
-    accumulated = ""
     try:
         with Live(output_panel, console=console, refresh_per_second=20, transient=False) as live:
+            accumulated = ""
             for chunk in agent.roast_stream(diff_text):
                 accumulated += chunk
                 # 更新 panel 内容
@@ -520,10 +360,6 @@ def main():
         )
     )
     console.print()
-
-    # 语音播报（后台线程，不阻塞）
-    if not args.no_tts and accumulated:
-        tts_speak(accumulated)
 
 
 if __name__ == "__main__":
