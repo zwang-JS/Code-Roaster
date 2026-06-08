@@ -18,9 +18,10 @@ from rich.color import Color, ColorSystem
 from rich import box
 
 from .config import check_config
-from .tools import get_git_diff
+from .tools import get_git_diff, get_diff_files
 from .prompts import get_persona, get_available_personas, PERSONAS
 from .agent import RoasterAgent
+from .history import save_review, show_history, show_stats
 
 console = Console()
 
@@ -223,9 +224,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--history",
+        action="store_true",
+        help="查看最近的审查历史记录",
+    )
+
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="查看本周审查统计报表",
+    )
+
+    parser.add_argument(
         "--version",
         action="version",
-        version="Code Roaster v1.2.0 — 赛博包工头",
+        version="Code Roaster v1.3.0 — 赛博包工头",
     )
 
     return parser
@@ -254,6 +267,59 @@ def show_loading_spinner(message: str = "赛博包工头正在审查你的代码
     return console.status(f"[bold yellow]🔥 {message}[/bold yellow]", spinner="dots")
 
 
+def select_files_interactive(diff_files: list) -> str | None:
+    """
+    显示文件选择菜单，让用户选择要审查的文件。
+
+    当 git diff 包含多个文件改动时使用。
+    支持: 单文件、多文件（空格分隔）、全部审查。
+
+    Args:
+        diff_files: get_diff_files() 返回的文件列表
+
+    Returns:
+        str | None: 合并后的 diff 文本，None 表示用户取消
+    """
+    console.print()
+    menu = Text()
+    menu.append("📁 检测到多个文件改动，请选择要审查的文件：\n\n", style="bold bright_cyan")
+
+    for i, f in enumerate(diff_files, 1):
+        menu.append(f"  [{i}] ", style="bold yellow")
+        menu.append(f"{f['filename']}", style="bold white")
+        menu.append(f"  +{f['added']}/-{f['removed']}\n", style="dim")
+
+    menu.append(f"\n  [a] ", style="bold yellow")
+    menu.append("全部审查", style="bold white")
+    menu.append(f"  ({len(diff_files)} 个文件)\n", style="dim")
+    menu.append(f"\n  输入编号（空格分隔多个），或直接回车审查全部", style="italic dim")
+
+    console.print(Panel(menu, border_style="bright_cyan", box=box.ROUNDED))
+    console.print()
+
+    try:
+        raw = Prompt.ask("请输入编号", default="a", show_default=False)
+    except KeyboardInterrupt:
+        return None
+
+    raw = raw.strip()
+
+    if raw.lower() == "a" or not raw:
+        selected = diff_files
+    else:
+        try:
+            indices = [int(x.strip()) - 1 for x in raw.split()]
+            selected = [diff_files[i] for i in indices if 0 <= i < len(diff_files)]
+        except (ValueError, IndexError):
+            console.print("[yellow]输入无效，默认审查全部。[/yellow]")
+            selected = diff_files
+
+    if not selected:
+        return None
+
+    return "\n\n".join(f["diff_text"] for f in selected)
+
+
 def main():
     """主函数 — CLI 入口点。"""
     parser = build_parser()
@@ -262,6 +328,16 @@ def main():
     # --list-personas 标志
     if args.list_personas:
         list_personas_simple()
+        return
+
+    # --history：查看审查历史
+    if args.history:
+        show_history()
+        return
+
+    # --stats：查看统计报表
+    if args.stats:
+        show_stats()
         return
 
     # 步骤 0：显示 Banner（除非用户跳过）
@@ -288,17 +364,17 @@ def main():
     console.print(Panel(header, box=box.HEAVY, border_style="bright_yellow"))
     console.print()
 
-    # 步骤 3：获取 git diff
+    # 步骤 3：获取 git diff（按文件拆分）
     with show_loading_spinner("正在获取代码变更..."):
-        diff_text = get_git_diff()
-        time.sleep(0.3)  # 给用户一点动画观看时间
+        diff_files = get_diff_files()
+        time.sleep(0.3)
 
-    # 步骤 4：处理空 diff
-    if not diff_text or diff_text.startswith("❌") or diff_text.startswith("⚠️") or diff_text.startswith("📭"):
-        if diff_text.startswith("❌") or diff_text.startswith("⚠️") or diff_text.startswith("📭"):
-            console.print(Panel(Text(diff_text, style="red"), border_style="red", title="出错了"))
+    # 步骤 4：处理空 diff / 错误
+    if not diff_files:
+        raw_diff = get_git_diff()
+        if raw_diff.startswith("❌") or raw_diff.startswith("⚠️") or raw_diff.startswith("📭"):
+            console.print(Panel(Text(raw_diff, style="red"), border_style="red", title="出错了"))
         else:
-            # diff 为空，打印性格专属的摸鱼嘲讽
             console.print(
                 Panel(
                     Text(persona["no_diff_message"], style="bright_yellow"),
@@ -308,7 +384,18 @@ def main():
             )
         return
 
-    # 步骤 5：实例化 Agent 并流式输出
+    # 步骤 5：多文件时让用户选择审查范围
+    if len(diff_files) == 1:
+        diff_text = diff_files[0]["diff_text"]
+        selected_files = [diff_files[0]["filename"]]
+    else:
+        diff_text = select_files_interactive(diff_files)
+        if diff_text is None:
+            return
+        # 如果用户选了全部，用全部文件名；否则需要重新计算
+        selected_files = [f["filename"] for f in diff_files]
+
+    # 步骤 6：实例化 Agent 并流式输出
     agent = RoasterAgent(config, persona_name)
 
     console.print()
@@ -329,12 +416,11 @@ def main():
         box=box.ROUNDED,
     )
 
+    accumulated = ""
     try:
         with Live(output_panel, console=console, refresh_per_second=20, transient=False) as live:
-            accumulated = ""
             for chunk in agent.roast_stream(diff_text):
                 accumulated += chunk
-                # 更新 panel 内容
                 new_text = Text(accumulated, style="white")
                 live.update(
                     Panel(
@@ -360,6 +446,10 @@ def main():
         )
     )
     console.print()
+
+    # 步骤 7：保存审查记录到历史
+    if accumulated:
+        save_review(persona_name, persona["emoji"], selected_files, accumulated)
 
 
 if __name__ == "__main__":

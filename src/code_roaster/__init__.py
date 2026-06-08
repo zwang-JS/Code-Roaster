@@ -7,5 +7,5 @@ Code Roaster — 赛博包工头
 对代码进行幽默且精准的 Review。
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "Code Roaster Contributors"

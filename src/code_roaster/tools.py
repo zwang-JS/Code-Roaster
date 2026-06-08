@@ -4,6 +4,7 @@
 提供与 Git 仓库交互的工具函数，用于获取代码变更。
 """
 
+import re
 import subprocess
 import sys
 
@@ -91,3 +92,52 @@ def get_git_diff_staged() -> str:
         return "⚠️  Git diff 执行超时。"
     except Exception as e:
         return f"⚠️  未知错误: {str(e)}"
+
+
+def get_diff_files() -> list[dict]:
+    """
+    将 `git diff HEAD` 的输出按文件拆分为独立 diff 块。
+
+    解析 diff 输出中的 `diff --git a/... b/...` 标记来分割文件。
+    同时提取每个文件的增删行数统计。
+
+    Returns:
+        list[dict]: 每个元素包含:
+            - filename: 文件名
+            - diff_text: 该文件的完整 diff 文本
+            - added: 新增行数 (int)
+            - removed: 删除行数 (int)
+    """
+    full_diff = get_git_diff()
+
+    # 如果 diff 是错误信息或为空，直接返回空列表
+    if not full_diff or full_diff.startswith("❌") or full_diff.startswith("⚠️") or full_diff.startswith("📭"):
+        return []
+
+    # 按 diff --git 标记分割
+    # 格式: diff --git a/path/to/file b/path/to/file
+    chunks = re.split(r'\n(?=diff --git )', full_diff)
+
+    files = []
+    for chunk in chunks:
+        if not chunk.strip():
+            continue
+
+        # 提取文件名
+        match = re.search(r'diff --git a/(.+) b/(.+)', chunk)
+        if not match:
+            continue
+        filename = match.group(1)
+
+        # 统计增删行数
+        added = len(re.findall(r'^\+(?!\+\+)', chunk, re.MULTILINE))
+        removed = len(re.findall(r'^-(?!--)', chunk, re.MULTILINE))
+
+        files.append({
+            "filename": filename,
+            "diff_text": chunk.strip(),
+            "added": added,
+            "removed": removed,
+        })
+
+    return files
